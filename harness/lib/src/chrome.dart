@@ -258,7 +258,12 @@ class ChromeSession {
         _byId[params['requestId'] as String]?.fromMemoryCache = true;
       case 'Network.loadingFailed':
         final rec = _byId[params['requestId'] as String];
-        if (rec != null) rec.failure = params['errorText'] as String?;
+        final errorText = params['errorText'] as String?;
+        // A fetch the page itself cancelled (duplicate font/asset requests
+        // during boot) is not a delivery failure.
+        if (rec != null && errorText != 'net::ERR_ABORTED') {
+          rec.failure = errorText;
+        }
       case 'Runtime.consoleAPICalled':
         final type = params['type'] as String;
         final args = (params['args'] as List<Object?>? ?? const [])

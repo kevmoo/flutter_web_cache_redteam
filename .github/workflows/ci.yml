@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PUB_ENVIRONMENT: bot.github
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: harness
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260
+        with:
+          sdk: dev
+      - id: install
+        run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed .
+        if: always() && steps.install.outcome == 'success'
+      - run: dart analyze --fatal-infos
+        if: always() && steps.install.outcome == 'success'
+      # Unit tests only; the scenarios need a Flutter checkout + Chromium and
+      # run locally (see README).
+      - run: dart test
+        if: always() && steps.install.outcome == 'success'
+
+  sample_app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sample_app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          cache: true
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib
+      - run: flutter analyze --fatal-infos
+      - run: flutter build web --web-content-hash

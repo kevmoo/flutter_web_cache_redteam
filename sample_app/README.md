@@ -1,17 +1,12 @@
 # sample_app
 
-A new Flutter project.
+Fixture for the red-team harness. Loads one of every asset type through
+every API path and publishes `window.__redteamJson` (see `lib/main.dart`).
+`lib/main_deferred.dart` is the deferred-import variant. `variants/` holds
+per-version images the harness swaps in before building.
 
-## Getting Started
+Build it by hand to poke at the output:
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```sh
+flutter build web --web-content-hash --dart-define=APP_VERSION=v1
+```

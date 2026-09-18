@@ -21,6 +21,7 @@ List<Scenario> allScenarios() => <Scenario>[
   RollbackScenario(HeaderPolicy.strict),
   RollbackScenario(HeaderPolicy.firebaseDefaults),
   LegacyServiceWorkerMigrationScenario(),
+  LegacyServiceWorkerMigrationScenario(HeaderPolicy.firebaseDefaults),
   CdnStaleIndexScenario(),
   ...variantScenarios(),
 ];
@@ -333,8 +334,12 @@ _flutter.loader.load({
 /// a v1 built without content hashing; v2 is a hashed build with the
 /// self-unregistering stub worker.
 class LegacyServiceWorkerMigrationScenario extends Scenario {
+  LegacyServiceWorkerMigrationScenario([this.policy = HeaderPolicy.strict]);
+
+  final HeaderPolicy policy;
+
   @override
-  String get id => 'S5';
+  String get id => 'S5.${policy.name}';
   @override
   String get title => 'migration from the legacy offline-first service worker';
   @override
@@ -357,8 +362,9 @@ class LegacyServiceWorkerMigrationScenario extends Scenario {
       result.error = 'build failed: ${v1.stderr}\n${v2.stderr}';
       return;
     }
-    // Strict headers so the HTTP cache cannot mask what the worker does.
-    final host = await ctx.host(HeaderPolicy.strict);
+    // `strict` isolates the worker from the HTTP cache; `firebaseDefaults`
+    // asks whether a cached worker script (max-age=3600) delays migration.
+    final host = await ctx.host(policy);
     final profile = ctx.freshProfile(id);
     try {
       await host.deployAtomic(v1.outDir);
