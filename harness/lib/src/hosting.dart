@@ -108,9 +108,15 @@ class HostingServer {
     this.cdnIndexTtl = Duration.zero,
     this.spaRewrite = false,
     this.basePath = '/',
+    this.negativeCacheTtl = Duration.zero,
   });
 
   HeaderPolicy policy;
+
+  /// `Cache-Control: max-age` applied to 404 responses. Zero = `no-cache`
+  /// (Firebase Hosting, S3). Some CDNs apply the path's header rules to 404s
+  /// too, which caches a missing hashed file for a year.
+  final Duration negativeCacheTtl;
 
   /// URL prefix the site is mounted under (matches `--base-href`).
   final String basePath;
@@ -258,10 +264,13 @@ class HostingServer {
 
     final cacheControl = cacheControlFor(policy, rel);
     if (bytes == null) {
-      log.add(ServedRequest(rel, 404, cacheControl, conditional: false));
+      final notFoundCc = negativeCacheTtl == Duration.zero
+          ? 'no-cache'
+          : 'max-age=${negativeCacheTtl.inSeconds}';
+      log.add(ServedRequest(rel, 404, notFoundCc, conditional: false));
       return Response.notFound(
         'not found: $rel',
-        headers: {'cache-control': ?cacheControl},
+        headers: {'cache-control': notFoundCc},
       );
     }
 

@@ -13,6 +13,10 @@ List<Scenario> allScenarios() => <Scenario>[
   for (final policy in HeaderPolicy.values) WarmUpgradeScenario(policy),
   NonAtomicDeployScenario(HeaderPolicy.strict),
   NonAtomicDeployScenario(HeaderPolicy.firebaseDefaults),
+  NonAtomicDeployScenario(
+    HeaderPolicy.strict,
+    negativeCacheTtl: const Duration(minutes: 5),
+  ),
   DeployUnderOpenTabScenario(),
   RollbackScenario(HeaderPolicy.strict),
   RollbackScenario(HeaderPolicy.firebaseDefaults),
@@ -85,8 +89,12 @@ void _checkDeployStamp(
   String expected,
 ) {
   final assets = report?['assets'] as Map<String, Object?>?;
-  final stamp =
-      (assets?['raw.deployStamp'] as Map<String, Object?>?)?['detail'];
+  final raw = assets?['raw.deployStamp'] as Map<String, Object?>?;
+  final resolved = assets?['resolved.deployStamp'] as Map<String, Object?>?;
+  // Prefer the manifest-resolved read (survives hashed assets); fall back to
+  // the raw key so master-only reports still work.
+  final Map<String, Object?>? source = resolved?['ok'] == true ? resolved : raw;
+  final stamp = source?['detail'];
   step.check(
     'asset deploy stamp is $expected',
     stamp == expected,
@@ -97,12 +105,16 @@ void _checkDeployStamp(
 /// S2: the host uploads the shell (index/bootstrap) before the new hashed
 /// entrypoint exists, or a deploy is caught half-way.
 class NonAtomicDeployScenario extends Scenario {
-  NonAtomicDeployScenario(this.policy);
+  NonAtomicDeployScenario(this.policy, {this.negativeCacheTtl = Duration.zero});
 
   final HeaderPolicy policy;
 
+  /// Model a CDN that caches 404s (see [HostingServer.negativeCacheTtl]).
+  final Duration negativeCacheTtl;
+
   @override
-  String get id => 'S2.${policy.name}';
+  String get id =>
+      'S2.${policy.name}${negativeCacheTtl == Duration.zero ? '' : '.negcache'}';
   @override
   String get title =>
       'non-atomic deploy (shell before entrypoint) under ${policy.name}';
@@ -119,7 +131,7 @@ class NonAtomicDeployScenario extends Scenario {
       result.error = 'build failed';
       return;
     }
-    final host = await ctx.host(policy);
+    final host = await ctx.host(policy, negativeCacheTtl: negativeCacheTtl);
     final profile = ctx.freshProfile(id);
     try {
       await host.deployAtomic(v1.outDir);
@@ -224,8 +236,12 @@ class DeployUnderOpenTabScenario extends Scenario {
         failed.isEmpty,
         failed.join(' | '),
       );
-      final stamp =
-          (lazy['lazy.deployStamp'] as Map<String, Object?>?)?['detail'];
+      final stampProbe =
+          (lazy['lazy.resolved.deployStamp'] as Map<String, Object?>?)?['ok'] ==
+              true
+          ? lazy['lazy.resolved.deployStamp']
+          : lazy['lazy.deployStamp'];
+      final stamp = (stampProbe as Map<String, Object?>?)?['detail'];
       step.check(
         'lazy asset bytes belong to the running version (v1)',
         stamp == 'v1',
@@ -297,6 +313,22 @@ class RollbackScenario extends Scenario {
   }
 }
 
+/// What `flutter_bootstrap.js` did before flutter/flutter#176834: register
+/// `flutter_service_worker.js?v=<random>` on every load. Today's loader only
+/// *updates* an existing registration, so a fresh install needs the explicit
+/// `serviceWorkerUrl`.
+const String legacyBootstrapJs = '''
+{{flutter_js}}
+{{flutter_build_config}}
+
+_flutter.loader.load({
+  serviceWorkerSettings: {
+    serviceWorkerVersion: {{flutter_service_worker_version}},
+    serviceWorkerUrl: 'flutter_service_worker.js?v=' + {{flutter_service_worker_version}},
+  },
+});
+''';
+
 /// S5: the user has the pre-3.38 offline-first service worker installed from
 /// a v1 built without content hashing; v2 is a hashed build with the
 /// self-unregistering stub worker.
@@ -316,6 +348,7 @@ class LegacyServiceWorkerMigrationScenario extends Scenario {
         version: 'v1',
         contentHash: false,
         legacyServiceWorker: true,
+        customBootstrapJs: legacyBootstrapJs,
       ),
     );
     final v2 = await ctx.build(_v2);
@@ -324,7 +357,8 @@ class LegacyServiceWorkerMigrationScenario extends Scenario {
       result.error = 'build failed: ${v1.stderr}\n${v2.stderr}';
       return;
     }
-    final host = await ctx.host(HeaderPolicy.firebaseDefaults);
+    // Strict headers so the HTTP cache cannot mask what the worker does.
+    final host = await ctx.host(HeaderPolicy.strict);
     final profile = ctx.freshProfile(id);
     try {
       await host.deployAtomic(v1.outDir);

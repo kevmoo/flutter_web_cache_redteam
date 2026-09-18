@@ -286,6 +286,9 @@ class ChromeSession {
         for (final v
             in (params['versions'] as List<Object?>)
                 .cast<Map<String, Object?>>()) {
+          // Chromium registers its own component-extension workers
+          // (chrome-extension://.../thunk.js); only the app's matter.
+          if (!(v['scriptURL'] as String).startsWith('http')) continue;
           final version = ServiceWorkerVersion(
             v['versionId'] as String,
             v['scriptURL'] as String,

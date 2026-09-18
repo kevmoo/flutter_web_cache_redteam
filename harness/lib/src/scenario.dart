@@ -131,12 +131,14 @@ class ScenarioContext {
     Duration cdnIndexTtl = Duration.zero,
     bool spaRewrite = false,
     String basePath = '/',
+    Duration negativeCacheTtl = Duration.zero,
   }) async {
     final server = HostingServer(
       policy: policy,
       cdnIndexTtl: cdnIndexTtl,
       spaRewrite: spaRewrite,
       basePath: basePath,
+      negativeCacheTtl: negativeCacheTtl,
     );
     await server.start();
     return server;

@@ -86,6 +86,25 @@ Future<String> _rawString(String key) async {
   return s.trim();
 }
 
+/// Reads a text asset after mapping its key through the AssetManifest, the
+/// way `AssetImage` does for images (picks the 1.0x variant).
+Future<String> _resolvedString(String key) async {
+  final AssetManifest manifest = await AssetManifest.loadFromAssetBundle(
+    rootBundle,
+  );
+  final List<AssetMetadata>? variants = manifest.getAssetVariants(key);
+  final String resolved = variants == null || variants.isEmpty
+      ? key
+      : variants
+            .firstWhere(
+              (v) => v.targetDevicePixelRatio == null,
+              orElse: () => variants.first,
+            )
+            .key;
+  final String s = await rootBundle.loadString(resolved, cache: false);
+  return s.trim();
+}
+
 /// Resolves an [AssetImage] the way `Image.asset` does (via AssetManifest,
 /// devicePixelRatio 2.0 so the 2.0x variant is preferred) and decodes it.
 Future<String> _image(AssetImage provider) async {
@@ -177,6 +196,13 @@ Future<void> _loadEager() async {
     'raw.deployStamp',
     () => _rawString('assets/data/deploy.txt'),
   );
+  // Same file, resolved through the AssetManifest first (works with hashed
+  // assets; on master the variant key equals the raw key).
+  await _probe(
+    assets,
+    'resolved.deployStamp',
+    () => _resolvedString('assets/data/deploy.txt'),
+  );
 
   // Transformed asset: bytes must be vector_graphics binary, not SVG text.
   await _probe(assets, 'transformed.svg', () async {
@@ -253,6 +279,11 @@ Future<void> _loadLazy() async {
     lazy,
     'lazy.deployStamp',
     () => _rawString('assets/lazy/deploy.txt'),
+  );
+  await _probe(
+    lazy,
+    'lazy.resolved.deployStamp',
+    () => _resolvedString('assets/lazy/deploy.txt'),
   );
   await _probe(lazy, 'lazy.url.txt', () => _assetUrl('assets/lazy/lazy.txt'));
   _report['lazyDone'] = true;

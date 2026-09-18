@@ -202,9 +202,18 @@ class Builder {
       if (outDir.existsSync()) outDir.deleteSync(recursive: true);
       _copyApp(sampleAppDir, srcDir);
     }
-    // Stamp assets with the version so old code can detect new assets.
+    // Stamp assets with the version so old code can detect new assets, and
+    // swap in the per-version logo so an *image* (and its hash) changes too.
     for (final rel in ['assets/data/deploy.txt', 'assets/lazy/deploy.txt']) {
       File(p.join(srcDir.path, rel)).writeAsStringSync('${options.version}\n');
+    }
+    var variant = Directory(p.join(srcDir.path, 'variants', options.version));
+    if (!variant.existsSync()) {
+      variant = Directory(p.join(srcDir.path, 'variants', 'v1'));
+    }
+    for (final rel in ['logo.png', '2.0x/logo.png', '3.0x/logo.png']) {
+      File(p.join(variant.path, rel))
+          .copySync(p.join(srcDir.path, 'assets', 'images', rel));
     }
 
     if (options.customIndexHtml != null) {

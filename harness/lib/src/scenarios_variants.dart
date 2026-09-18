@@ -138,17 +138,29 @@ class CustomIndexScenario extends Scenario {
     );
     result.builds.add(b.toJson());
     final step = result.step('build');
-    step.check('build succeeded', b.succeeded, b.stderr.trim());
-    final warned = RegExp(
-      r'main\.dart\.js|content.hash|not supported|deprecated',
-      caseSensitive: false,
-    ).hasMatch('${b.stdout}\n${b.stderr}');
+    // The documented incompatibility must be a hard, explained error rather
+    // than a build that ships a blank page.
     step.check(
-      'tool warned about the incompatible index.html',
-      warned,
-      'stdout/stderr had no mention; tail: ${b.stdout.trim().split('\n').reversed.take(3).join(' / ')}',
+      'tool refuses to build',
+      !b.succeeded,
+      b.succeeded
+          ? 'built: ${b.entrypoints().join(', ')}'
+          : 'exit ${b.exitCode}',
+    );
+    final message = '${b.stdout}\n${b.stderr}';
+    step.check(
+      'error names main.dart.js and the fix',
+      RegExp(r'main\.dart\.js').hasMatch(message) &&
+          RegExp(r'flutter_bootstrap\.js|flutter create').hasMatch(message),
+      message
+          .trim()
+          .split('\n')
+          .where((l) => l.contains('main.dart.js'))
+          .take(2)
+          .join(' / '),
     );
     if (!b.succeeded) return;
+    // If it ever builds, show what a user would get.
 
     final host = await ctx.host(HeaderPolicy.strict);
     final profile = ctx.freshProfile(id);
@@ -360,7 +372,7 @@ class IncrementalRebuildScenario extends Scenario {
   String get title => 'incremental rebuild leaves no stale hashed files';
   @override
   String get description =>
-      'Second `flutter build web` in the same directory; compare output trees.';
+      'Build incr1 then incr2 in the same directory; the output must equal a fresh incr2 build.';
 
   @override
   Future<void> run(ScenarioContext ctx, ScenarioResult result) async {
@@ -369,35 +381,53 @@ class IncrementalRebuildScenario extends Scenario {
       result.error = 'v1 build failed';
       return;
     }
-    final v1Files = v1.fileHashes().keys.toSet();
-    final v2 = await ctx.builder.build(
+    final incremental = await ctx.builder.build(
       ctx.sdk,
       const BuildOptions(version: 'incr2'),
       incrementalFrom: v1,
     );
-    result.builds.addAll([v1.toJson(), v2.toJson()]);
-    final step = result.step('compare');
-    step.check('v2 build succeeded', v2.succeeded, v2.stderr.trim());
-    if (!v2.succeeded) return;
-    final v2Files = v2.fileHashes().keys.toSet();
-    final hashed = RegExp(r'\.[a-f0-9]{8}(\.|$)');
-    final stale = v1Files.difference(v2Files).where(hashed.hasMatch).toList();
-    // Files present in v2's output dir that carry a hash from v1.
-    final leftover = v2Files
-        .where((f) => hashed.hasMatch(f) && v1Files.contains(f))
-        .toList();
-    step.notes.add(
-      'v1 hashed files: ${v1Files.where(hashed.hasMatch).join(', ')}',
+    final fresh = await ctx.build(const BuildOptions(version: 'incr2'));
+    result.builds.addAll([v1.toJson(), incremental.toJson(), fresh.toJson()]);
+    final step = result.step('compare incremental incr2 with a fresh incr2');
+    step.check(
+      'incremental build succeeded',
+      incremental.succeeded,
+      incremental.stderr.trim(),
     );
-    step.notes.add(
-      'v2 hashed files: ${v2Files.where(hashed.hasMatch).join(', ')}',
+    step.check('fresh build succeeded', fresh.succeeded, fresh.stderr.trim());
+    if (!incremental.succeeded || !fresh.succeeded) return;
+    // Unchanged assets legitimately keep their hash; what must not happen is
+    // a file existing in the incremental output that a clean build lacks.
+    final volatile = {
+      '.last_build_id',
+      'flutter_bootstrap.js',
+      'flutter_service_worker.js',
+    };
+    final incr = incremental
+        .fileHashes()
+        .keys
+        .where((f) => !volatile.contains(f))
+        .toSet();
+    final clean = fresh
+        .fileHashes()
+        .keys
+        .where((f) => !volatile.contains(f))
+        .toSet();
+    final extra = incr.difference(clean).toList()..sort();
+    final missing = clean.difference(incr).toList()..sort();
+    step.check(
+      'no extra files vs a clean build',
+      extra.isEmpty,
+      'stale: ${extra.take(8).join(', ')}',
     );
     step.check(
-      'no v1 hashed file survives in the v2 output',
-      leftover.isEmpty,
-      'leftover: ${leftover.join(', ')}',
+      'no missing files vs a clean build',
+      missing.isEmpty,
+      'missing: ${missing.take(8).join(', ')}',
     );
-    step.notes.add('removed from v1→v2: ${stale.join(', ')}');
+    step.notes.add(
+      '${incr.length} files in incremental output, ${clean.length} in clean',
+    );
   }
 }
 
@@ -449,8 +479,12 @@ class TwoTabScenario extends Scenario {
           .map((e) => e.key)
           .toList();
       step.check('tab A lazy assets loaded', failed.isEmpty, failed.join(', '));
-      final stamp =
-          (lazy['lazy.deployStamp'] as Map<String, Object?>?)?['detail'];
+      final stampProbe =
+          (lazy['lazy.resolved.deployStamp'] as Map<String, Object?>?)?['ok'] ==
+              true
+          ? lazy['lazy.resolved.deployStamp']
+          : lazy['lazy.deployStamp'];
+      final stamp = (stampProbe as Map<String, Object?>?)?['detail'];
       step.check(
         'tab A got v1 asset bytes',
         stamp == 'v1',
