@@ -1,0 +1,12 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+pubspec.lock
+!sample_app/pubspec.lock
+*.iml
+.idea/
+.metadata
+
+# Harness output
+results/

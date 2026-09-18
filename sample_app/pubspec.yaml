@@ -1,0 +1,58 @@
+name: sample_app
+description: >-
+  Red-team fixture: a Flutter web app that loads every kind of asset the
+  pipeline supports and reports what it actually got via window.__redteamJson.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.6.0
+  sample_pkg:
+    path: ../sample_pkg
+  vector_graphics: ^1.1.18
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  vector_graphics_compiler: ^1.1.18
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    # Raster images with resolution variants (2.0x/3.0x directories).
+    - assets/images/logo.png
+    - assets/images/photo.jpg
+    - assets/images/anim.gif
+    - assets/images/pic.webp
+    - assets/images/bitmap.bmp
+    # Raw data read through rootBundle.
+    - assets/data/config.json
+    - assets/data/notes.txt
+    - assets/data/blob.bin
+    # Written by the harness at build time; lets old code detect new assets.
+    - assets/data/deploy.txt
+    # Directory wildcard.
+    - assets/dir/
+    # Loaded only on demand (after a deploy may have happened underneath).
+    - assets/lazy/
+    # Asset transformer: the SVG is compiled to vector_graphics binary at build.
+    - path: assets/svg/icon.svg
+      transformers:
+        - package: vector_graphics_compiler
+
+  fonts:
+    - family: AdwaitaMono
+      fonts:
+        - asset: assets/fonts/AdwaitaMono-Bold.ttf
+          weight: 700
+
+  shaders:
+    - shaders/simple.frag
