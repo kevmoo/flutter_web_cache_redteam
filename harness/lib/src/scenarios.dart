@@ -430,10 +430,33 @@ class LegacyServiceWorkerMigrationScenario extends Scenario {
       step = result.step('fourth visit');
       report = await loadAndCapture(step, chrome, host, host.baseUri);
       checkHealthyLoad(step, chrome, report, expectedVersion: 'v2');
+      // Watch for a register → unregister → navigate loop driven by a still
+      // cached legacy bootstrap.
+      await chrome.settle(const Duration(seconds: 10));
+      final finalReport = await chrome.waitForAppReport(
+        timeout: const Duration(seconds: 5),
+      );
+      step.capture(chrome, host, finalReport);
+      final installs = chrome.serviceWorkerEvents
+          .where((e) => e.endsWith('installing/running'))
+          .length;
+      step.check(
+        'no reload loop (≤1 navigation in 10 s after load)',
+        chrome.navigations <= 1,
+        'navigations=${chrome.navigations} worker installs=$installs',
+      );
       step.check(
         'nothing served from a service worker',
         chrome.requests.every((r) => !r.fromServiceWorker),
         requestSources(chrome),
+      );
+      step.notes.add(
+        'SW events: ${chrome.serviceWorkerEvents.join(' > ')}'.substring(
+          0,
+          300 > chrome.serviceWorkerEvents.join(' > ').length + 11
+              ? chrome.serviceWorkerEvents.join(' > ').length + 11
+              : 300,
+        ),
       );
       await chrome.close();
     } finally {

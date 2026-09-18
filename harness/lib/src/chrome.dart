@@ -130,6 +130,11 @@ class ChromeSession {
       <String, ServiceWorkerVersion>{};
   final List<String> serviceWorkerEvents = <String>[];
 
+  /// Top-level navigations since the last [resetObservations] (1 = the load
+  /// itself; more = the page reloaded itself, e.g. a service worker
+  /// calling `client.navigate()`).
+  int navigations = 0;
+
   static Future<ChromeSession> launch({
     required Directory profileDir,
     bool headless = true,
@@ -305,6 +310,9 @@ class ChromeSession {
             '${version.versionId} ${version.status}/${version.runningStatus}',
           );
         }
+      case 'Page.frameNavigated':
+        final frame = params['frame'] as Map<String, Object?>;
+        if (frame['parentId'] == null) navigations++;
       case 'ServiceWorker.workerErrorReported':
         serviceWorkerEvents.add('ERROR ${params['errorMessage']}');
         consoleErrors.add('service worker error: ${params['errorMessage']}');
@@ -320,6 +328,7 @@ class ChromeSession {
     consoleMessages.clear();
     logEntries.clear();
     serviceWorkerEvents.clear();
+    navigations = 0;
   }
 
   Future<void> navigate(String url) async {
@@ -461,5 +470,6 @@ class ChromeSession {
     'logEntries': logEntries,
     'serviceWorkers': serviceWorkers.values.map((v) => v.toJson()).toList(),
     'serviceWorkerEvents': serviceWorkerEvents,
+    'navigations': navigations,
   };
 }

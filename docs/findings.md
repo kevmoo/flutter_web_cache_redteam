@@ -300,4 +300,29 @@ bytes, `urlHashed` is correct for all entries, and every runtime file
 
 ---
 
+## F19 · MEDIUM · `master` · Legacy-worker migration under Firebase default headers: worker gone, user still on v1 for the bootstrap's max-age
+
+**Scenario** S5.firebaseDefaults (same as F14 but `max-age=3600` on
+everything).
+
+**Observed** Visit 3: the stub installs, the legacy worker goes `redundant`,
+the client is navigated — and the reload serves `flutter_bootstrap.js` and
+`main.dart.js` from the **HTTP disk cache** (v1, `max-age=3600`). Visit 4:
+no worker controls the page, the cached v1 bootstrap registers
+`flutter_service_worker.js?v=<old>` again, the stub installs and unregisters
+itself again (worker versions 4 → 5), but does **not** navigate (it only
+navigates clients it controls, and a fresh registration controls nothing),
+so there is no reload loop — measured: 1 navigation in 10 s. The user sees
+v1 until the bootstrap's cache entry expires.
+
+**Why it matters** For an app upgrading across #176834 on default Firebase
+headers, the worker cleanup works but buys nothing for an hour; every visit
+in that hour pays an install/unregister cycle. Compare S5.strict, where the
+same migration lands v2 on visit 3.
+
+**Recommendation** Nothing new beyond F1/F3: `flutter_bootstrap.js` must be
+`no-cache`, and deployment docs for the worker removal should say so
+explicitly, because "the worker is gone" reads like "users are on the new
+build" and here it isn't.
+
 _Full evidence: `results/full/` (both targets, all scenarios). S5.firebaseDefaults: see `results/s5/`._
