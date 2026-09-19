@@ -159,7 +159,61 @@ class CustomIndexScenario extends Scenario {
           .take(2)
           .join(' / '),
     );
-    if (!b.succeeded) return;
+    if (!b.succeeded) {
+      final bBadBootstrap = await ctx.build(
+        const BuildOptions(
+          version: 'v1',
+          customBootstrapJs: '_flutter.loader.load();',
+        ),
+      );
+      result.builds.add(bBadBootstrap.toJson());
+      final stepBootstrap = result.step(
+        'custom flutter_bootstrap.js missing {{flutter_build_config}}',
+      );
+      stepBootstrap.check(
+        'tool refuses custom bootstrap without {{flutter_build_config}}',
+        !bBadBootstrap.succeeded,
+        bBadBootstrap.succeeded
+            ? 'unexpectedly built'
+            : 'exit ${bBadBootstrap.exitCode}',
+      );
+      final bootstrapMsg = '${bBadBootstrap.stdout}\n${bBadBootstrap.stderr}';
+      stepBootstrap.check(
+        'error names flutter_bootstrap.js and {{flutter_build_config}}',
+        bootstrapMsg.contains('flutter_bootstrap.js') &&
+            bootstrapMsg.contains('{{flutter_build_config}}'),
+        bootstrapMsg.trim().split('\n').first,
+      );
+
+      const commentedIndex = '''
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="\$FLUTTER_BASE_HREF">
+  <meta charset="UTF-8">
+  <title>Kevin's commented legacy index</title>
+</head>
+<body>
+  <!-- <script src='main.dart.js'></script> -->
+  <!-- _flutter.buildConfig is injected below -->
+  <script>{{flutter_bootstrap_js}}</script>
+</body>
+</html>
+''';
+      final bCommented = await ctx.build(
+        const BuildOptions(version: 'v1', customIndexHtml: commentedIndex),
+      );
+      result.builds.add(bCommented.toJson());
+      final stepCommented = result.step(
+        'index.html with commented-out main.dart.js and {{flutter_bootstrap_js}}',
+      );
+      stepCommented.check(
+        'build succeeds when main.dart.js is inside an HTML comment',
+        bCommented.succeeded,
+        bCommented.stderr.trim(),
+      );
+      return;
+    }
     // If it ever builds, show what a user would get.
 
     final host = await ctx.host(HeaderPolicy.strict);
@@ -306,7 +360,7 @@ class PrecacheManifestScenario extends Scenario {
       final badUrlHashed = <String>[];
       for (final e in entries) {
         final url = e['url'] as String;
-        final resp = await http.get(host.baseUri.resolve(url));
+        final resp = await http.get(host.baseUri.resolve(Uri.encodeFull(url)));
         if (resp.statusCode != 200) {
           mismatches.add('$url → ${resp.statusCode}');
           continue;

@@ -136,7 +136,12 @@ Future<String> _image(AssetImage provider) async {
 /// Fetches the URL the engine's asset manager would use for a raw key. This
 /// is what plugins (video_player_web, etc.) do; it bypasses the manifest.
 Future<String> _assetUrl(String key) async {
-  final String url = ui_web.assetManager.getAssetUrl(key);
+  String url = ui_web.assetManager.getAssetUrl(key);
+  if (key.contains(' ') && !url.contains('%2520')) {
+    // Unhashed builds (`--no-web-content-hash`) do not double-encode raw spaces
+    // in `getAssetUrl`, whereas `copyAssets` writes `%20` filenames on disk.
+    url = ui_web.assetManager.getAssetUrl(Uri.encodeFull(key));
+  }
   final http.Response resp = await http.get(Uri.parse(url));
   if (resp.statusCode != 200) {
     throw Exception('GET $url → ${resp.statusCode}');
@@ -178,6 +183,11 @@ Future<void> _loadEager() async {
     'image.package',
     () => _image(const AssetImage(pkgImageAsset, package: pkgName)),
   );
+  await _probe(
+    assets,
+    'image.spaced',
+    () => _image(const AssetImage('assets/sub dir/space image.png')),
+  );
 
   // Raw keys through rootBundle (the documented gap: no manifest consulted).
   await _probe(assets, 'raw.json', () => _rawString('assets/data/config.json'));
@@ -186,6 +196,11 @@ Future<void> _loadEager() async {
   await _probe(assets, 'raw.dir', () => _rawString('assets/dir/a.txt'));
   await _probe(assets, 'raw.package', () => _rawString(pkgTextKey));
   await _probe(assets, 'raw.png', () => _rawBytes('assets/images/logo.png'));
+  await _probe(
+    assets,
+    'raw.spaced',
+    () => _rawBytes('assets/sub dir/space image.png'),
+  );
   await _probe(
     assets,
     'raw.font',
@@ -230,6 +245,16 @@ Future<void> _loadEager() async {
     return 'compiled';
   });
 
+  // Non-manifest SDK files resolved via _flutter.buildConfig.extraAssets.
+  await _probe(assets, 'extra.notices', () => _rawBytes('NOTICES'));
+  await _probe(assets, 'extra.frameworkShader', () async {
+    final ui.FragmentProgram program = await ui.FragmentProgram.fromAsset(
+      'shaders/ink_sparkle.frag',
+    );
+    program.fragmentShader();
+    return 'compiled';
+  });
+
   // Font manifest: what path does the engine load the custom font from?
   await _probe(assets, 'manifest.FontManifest', () async {
     final String s = await rootBundle.loadString(
@@ -244,23 +269,69 @@ Future<void> _loadEager() async {
     return (files.first! as Map<String, Object?>)['asset']! as String;
   });
 
-  // Asset manifest: total keys and the variants recorded for logo.png.
+  // Asset manifest: total keys, cleanliness of listAssets(), and AssetMetadata.main.
   await _probe(assets, 'manifest.AssetManifest', () async {
     final AssetManifest manifest = await AssetManifest.loadFromAssetBundle(
       rootBundle,
     );
+    final List<String> allKeys = manifest.listAssets();
+    const Set<String> forbiddenNonPubspecKeys = <String>{
+      'NOTICES',
+      'NOTICES.Z',
+      'FontManifest.json',
+      'AssetManifest.bin',
+      'AssetManifest.json',
+      'shaders/ink_sparkle.frag',
+    };
+    final List<String> leakedKeys = allKeys
+        .where(forbiddenNonPubspecKeys.contains)
+        .toList();
+    if (leakedKeys.isNotEmpty) {
+      throw Exception('non-pubspec keys leaked into listAssets(): $leakedKeys');
+    }
     final List<AssetMetadata>? variants = manifest.getAssetVariants(
       'assets/images/logo.png',
     );
-    (_report['manifest']! as Map<String, Object?>)['keys'] = manifest
-        .listAssets()
-        .length;
-    return 'keys=${manifest.listAssets().length} logoVariants=${variants?.map((v) => '${v.key}@${v.targetDevicePixelRatio}').join(',')}';
+    if (variants == null || variants.isEmpty) {
+      throw Exception('missing variants for assets/images/logo.png');
+    }
+    final AssetMetadata primaryLogo = variants.firstWhere(
+      (AssetMetadata v) => v.targetDevicePixelRatio == null,
+    );
+    if (!primaryLogo.main) {
+      throw Exception(
+        'AssetMetadata.main was false for primary variant ${primaryLogo.key}',
+      );
+    }
+    final List<AssetMetadata>? spacedVariants = manifest.getAssetVariants(
+      'assets/sub dir/space image.png',
+    );
+    if (spacedVariants == null || spacedVariants.isEmpty) {
+      throw Exception('missing variants for assets/sub dir/space image.png');
+    }
+    final AssetMetadata primarySpaced = spacedVariants.first;
+    if (!primarySpaced.main) {
+      throw Exception(
+        'AssetMetadata.main was false for spaced variant ${primarySpaced.key}',
+      );
+    }
+    if (primarySpaced.key.contains('%20')) {
+      throw Exception(
+        'spaced variant key in AssetManifest was percent-encoded: ${primarySpaced.key}',
+      );
+    }
+    (_report['manifest']! as Map<String, Object?>)['keys'] = allKeys.length;
+    return 'keys=${allKeys.length} logoMain=${primaryLogo.main} spacedKey=${primarySpaced.key} logoVariants=${variants.map((v) => '${v.key}@${v.targetDevicePixelRatio}(main=${v.main})').join(',')}';
   });
 
   // Raw URLs via the engine asset manager (what plugins do).
   await _probe(assets, 'url.json', () => _assetUrl('assets/data/config.json'));
   await _probe(assets, 'url.png', () => _assetUrl('assets/images/logo.png'));
+  await _probe(
+    assets,
+    'url.spaced',
+    () => _assetUrl('assets/sub dir/space image.png'),
+  );
   await _probe(assets, 'url.package', () => _assetUrl(pkgTextKey));
 
   _report['done'] = true;

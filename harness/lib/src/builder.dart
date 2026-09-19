@@ -44,7 +44,10 @@ class FlutterSdk {
   Future<String> version() async {
     final res = await Process.run(flutterBin, ['--version', '--machine']);
     if (res.exitCode != 0) return 'unknown';
-    final map = json.decode(res.stdout as String) as Map<String, Object?>;
+    final out = res.stdout as String;
+    final start = out.indexOf('{');
+    if (start < 0) return 'unknown';
+    final map = json.decode(out.substring(start)) as Map<String, Object?>;
     return '${map['frameworkVersion']} @ ${(map['frameworkRevision'] as String?)?.substring(0, 10)}';
   }
 }
@@ -97,8 +100,10 @@ class BuildOptions {
     'pwa-$pwaStrategy',
     if (flavor != null) 'flavor-$flavor',
     if (legacyServiceWorker) 'legacysw',
-    if (customIndexHtml != null) 'customindex',
-    if (customBootstrapJs != null) 'custombootstrap',
+    if (customIndexHtml != null)
+      'customindex-${sha256.convert(utf8.encode(customIndexHtml!)).toString().substring(0, 6)}',
+    if (customBootstrapJs != null)
+      'custombootstrap-${sha256.convert(utf8.encode(customBootstrapJs!)).toString().substring(0, 6)}',
     if (target != null) 'target-${target!.split('/').last.split('.').first}',
     ...extraArgs,
   ].join('_').replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '-');

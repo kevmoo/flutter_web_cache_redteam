@@ -359,21 +359,29 @@ class ChromeSession {
   /// itself evidence (blank screen / never booted).
   Future<Map<String, Object?>?> waitForAppReport({
     Duration timeout = const Duration(seconds: 30),
+    String? expectedVersion,
   }) async {
     final deadline = DateTime.now().add(timeout);
+    Map<String, Object?>? lastDone;
     while (DateTime.now().isBefore(deadline)) {
       try {
         final raw = await evaluate('window.__redteamJson || null');
         if (raw is String) {
           final report = json.decode(raw) as Map<String, Object?>;
-          if (report['done'] == true) return report;
+          if (report['done'] == true) {
+            lastDone = report;
+            if (expectedVersion == null ||
+                report['version'] == expectedVersion) {
+              return report;
+            }
+          }
         }
       } catch (_) {
         // Page may be mid-navigation.
       }
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
-    return null;
+    return lastDone;
   }
 
   /// Asks the running app to load its lazy asset set (simulates a user

@@ -40,6 +40,7 @@ void injectLegacyServiceWorker(Directory build) {
     if (rel.endsWith('.map') || rel == 'flutter_service_worker.js') continue;
     final hash = md5.convert(file.readAsBytesSync()).toString();
     resources[rel] = hash;
+    if (rel.contains('%')) resources[Uri.encodeFull(rel)] = hash;
     if (rel == 'index.html') resources['/'] = hash;
   }
   final entry = resources.keys.firstWhere(
