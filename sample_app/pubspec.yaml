@@ -33,6 +33,7 @@ flutter:
     - assets/images/anim.gif
     - assets/images/pic.webp
     - assets/images/bitmap.bmp
+    - assets/sub dir/space image.png
     # Raw data read through rootBundle.
     - assets/data/config.json
     - assets/data/notes.txt

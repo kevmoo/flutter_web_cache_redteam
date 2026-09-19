@@ -97,8 +97,10 @@ class BuildOptions {
     'pwa-$pwaStrategy',
     if (flavor != null) 'flavor-$flavor',
     if (legacyServiceWorker) 'legacysw',
-    if (customIndexHtml != null) 'customindex',
-    if (customBootstrapJs != null) 'custombootstrap',
+    if (customIndexHtml != null)
+      'customindex-${sha256.convert(utf8.encode(customIndexHtml!)).toString().substring(0, 6)}',
+    if (customBootstrapJs != null)
+      'custombootstrap-${sha256.convert(utf8.encode(customBootstrapJs!)).toString().substring(0, 6)}',
     if (target != null) 'target-${target!.split('/').last.split('.').first}',
     ...extraArgs,
   ].join('_').replaceAll(RegExp(r'[^A-Za-z0-9_.-]'), '-');
