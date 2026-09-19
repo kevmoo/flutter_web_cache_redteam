@@ -36,26 +36,30 @@ void main() {
       );
     });
 
-    test(
-      'firebaseRules mirrors fb-config: assets fall through to max-age=3600',
-      () {
-        expect(
-          cacheControlFor(HeaderPolicy.firebaseRules, 'main.dart.ff283653.js'),
-          contains('immutable'),
-        );
-        expect(
-          cacheControlFor(HeaderPolicy.firebaseRules, 'flutter_bootstrap.js'),
-          contains('no-cache'),
-        );
-        expect(
-          cacheControlFor(
-            HeaderPolicy.firebaseRules,
-            'assets/AssetManifest.bin.json',
-          ),
-          'max-age=3600',
-        );
-      },
-    );
+    test('firebaseRules mirrors fb-config 5-rule stack: roots/manifests revalidate, assets/** immutable', () {
+      expect(
+        cacheControlFor(HeaderPolicy.firebaseRules, 'main.dart.ff283653.js'),
+        contains('immutable'),
+      );
+      expect(
+        cacheControlFor(HeaderPolicy.firebaseRules, 'flutter_bootstrap.js'),
+        'max-age=0, must-revalidate',
+      );
+      expect(
+        cacheControlFor(
+          HeaderPolicy.firebaseRules,
+          'assets/AssetManifest.bin.json',
+        ),
+        'max-age=0, must-revalidate',
+      );
+      expect(
+        cacheControlFor(
+          HeaderPolicy.firebaseRules,
+          'assets/packages/foo/bar.a1b2c3d4.png',
+        ),
+        contains('immutable'),
+      );
+    });
 
     test('heuristic sends no header at all', () {
       expect(cacheControlFor(HeaderPolicy.heuristic, 'index.html'), isNull);
