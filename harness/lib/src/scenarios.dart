@@ -407,6 +407,7 @@ class LegacyServiceWorkerMigrationScenario extends Scenario {
       await chrome.settle(const Duration(seconds: 6));
       final after = await chrome.waitForAppReport(
         timeout: const Duration(seconds: 20),
+        expectedVersion: 'v2',
       );
       step.capture(chrome, host, after);
       step.check(

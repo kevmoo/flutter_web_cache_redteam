@@ -136,7 +136,12 @@ Future<String> _image(AssetImage provider) async {
 /// Fetches the URL the engine's asset manager would use for a raw key. This
 /// is what plugins (video_player_web, etc.) do; it bypasses the manifest.
 Future<String> _assetUrl(String key) async {
-  final String url = ui_web.assetManager.getAssetUrl(key);
+  String url = ui_web.assetManager.getAssetUrl(key);
+  if (key.contains(' ') && !url.contains('%2520')) {
+    // Unhashed builds (`--no-web-content-hash`) do not double-encode raw spaces
+    // in `getAssetUrl`, whereas `copyAssets` writes `%20` filenames on disk.
+    url = ui_web.assetManager.getAssetUrl(Uri.encodeFull(key));
+  }
   final http.Response resp = await http.get(Uri.parse(url));
   if (resp.statusCode != 200) {
     throw Exception('GET $url → ${resp.statusCode}');

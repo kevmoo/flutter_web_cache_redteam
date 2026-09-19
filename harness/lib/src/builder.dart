@@ -44,7 +44,10 @@ class FlutterSdk {
   Future<String> version() async {
     final res = await Process.run(flutterBin, ['--version', '--machine']);
     if (res.exitCode != 0) return 'unknown';
-    final map = json.decode(res.stdout as String) as Map<String, Object?>;
+    final out = res.stdout as String;
+    final start = out.indexOf('{');
+    if (start < 0) return 'unknown';
+    final map = json.decode(out.substring(start)) as Map<String, Object?>;
     return '${map['frameworkVersion']} @ ${(map['frameworkRevision'] as String?)?.substring(0, 10)}';
   }
 }
