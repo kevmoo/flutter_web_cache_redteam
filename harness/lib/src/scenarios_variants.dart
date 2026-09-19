@@ -191,10 +191,11 @@ class CustomIndexScenario extends Scenario {
 <head>
   <base href="\$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">
-  <title>commented legacy index</title>
+  <title>Kevin's commented legacy index</title>
 </head>
 <body>
-  <!-- <script src="main.dart.js"></script> -->
+  <!-- <script src='main.dart.js'></script> -->
+  <!-- _flutter.buildConfig is injected below -->
   <script>{{flutter_bootstrap_js}}</script>
 </body>
 </html>
