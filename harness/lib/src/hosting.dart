@@ -32,21 +32,27 @@ enum HeaderPolicy {
   /// Misconfiguration: `index.html` revalidates but `flutter_bootstrap.js`
   /// (and everything else) is cached for a year.
   bootstrapCached,
+
+  /// Misconfiguration: `**/*.{js,wasm,mjs,png}` set to immutable with unguarded
+  /// SPA rewrite (`**` -> `/index.html`).
+  naiveImmutableGlobs,
 }
 
 final RegExp _hashedEntrypoint = RegExp(
   r'^main\.dart(_module\d+)?\.[a-f0-9]{8}\.(js|wasm|mjs)$',
 );
 final RegExp _hashedAsset = RegExp(r'\.[a-f0-9]{8}(\.[A-Za-z0-9]+)?$');
-const Set<String> _bootloaders = {
-  'index.html',
-  'flutter_bootstrap.js',
-  'flutter.js',
-  'flutter_service_worker.js',
-  'manifest.json',
-  'version.json',
-  'precache_manifest.json',
+const Set<String> _unhashedAssetManifests = {
+  'assets/AssetManifest.json',
+  'assets/AssetManifest.bin',
+  'assets/AssetManifest.bin.json',
+  'assets/FontManifest.json',
+  'assets/NOTICES',
 };
+
+const String _immutableDirective = 'public, max-age=31536000, immutable';
+const String _revalidateDirective = 'max-age=0, must-revalidate';
+const String _noCacheDirective = 'max-age=0, must-revalidate, no-cache';
 
 /// `Cache-Control` for [relPath] under [policy]; null means omit the header.
 String? cacheControlFor(HeaderPolicy policy, String relPath) {
@@ -54,29 +60,51 @@ String? cacheControlFor(HeaderPolicy policy, String relPath) {
   final isHashedEntry = _hashedEntrypoint.hasMatch(base);
   final isHashedAsset =
       relPath.startsWith('assets/') && _hashedAsset.hasMatch(base);
-  const immutable = 'public, max-age=31536000, immutable';
-  const noCache = 'no-cache, no-store, must-revalidate';
   switch (policy) {
     case HeaderPolicy.heuristic:
       return null;
     case HeaderPolicy.firebaseDefaults:
       return 'max-age=3600';
     case HeaderPolicy.firebaseRules:
-      if (isHashedEntry) return immutable;
-      if (_bootloaders.contains(base) ||
-          base.contains('.part.') ||
-          base.startsWith('_module')) {
-        return noCache;
-      }
-      return 'max-age=3600';
+      return _firebaseRulesCacheControl(relPath, isHashedEntry: isHashedEntry);
     case HeaderPolicy.strict:
-      return (isHashedEntry || isHashedAsset) ? immutable : noCache;
+      return (isHashedEntry || isHashedAsset)
+          ? _immutableDirective
+          : _noCacheDirective;
     case HeaderPolicy.cacheEverything:
-      return immutable;
+      return _immutableDirective;
     case HeaderPolicy.bootstrapCached:
-      return base == 'index.html' ? noCache : immutable;
+      return base == 'index.html' ? _noCacheDirective : _immutableDirective;
+    case HeaderPolicy.naiveImmutableGlobs:
+      return _isNaiveImmutableAsset(relPath)
+          ? _immutableDirective
+          : 'max-age=3600';
   }
 }
+
+String _firebaseRulesCacheControl(
+  String relPath, {
+  required bool isHashedEntry,
+}) {
+  // 5-rule last-match-wins stack from `fb-config`:
+  // 1. "**" -> "max-age=0, must-revalidate"
+  var result = _revalidateDirective;
+  // 2. "**/main.dart.*.{js,wasm,mjs}" -> "public, max-age=31536000, immutable"
+  if (isHashedEntry) result = _immutableDirective;
+  // 3. "assets/**" -> "public, max-age=31536000, immutable"
+  if (relPath.startsWith('assets/')) result = _immutableDirective;
+  // 4. "assets/@(AssetManifest.json|AssetManifest.bin|AssetManifest.bin.json|FontManifest.json|NOTICES)" -> "max-age=0, must-revalidate"
+  if (_unhashedAssetManifests.contains(relPath)) result = _revalidateDirective;
+  // 5. "404.html" -> "max-age=0, must-revalidate"
+  if (relPath == '404.html') result = _revalidateDirective;
+  return result;
+}
+
+bool _isNaiveImmutableAsset(String relPath) =>
+    relPath.endsWith('.js') ||
+    relPath.endsWith('.wasm') ||
+    relPath.endsWith('.mjs') ||
+    relPath.endsWith('.png');
 
 /// One request the simulated host answered.
 class ServedRequest {
@@ -107,13 +135,14 @@ class HostingServer {
     required this.policy,
     this.cdnIndexTtl = Duration.zero,
     this.spaRewrite = false,
+    this.spaRewriteAll = false,
     this.basePath = '/',
     this.negativeCacheTtl = Duration.zero,
   });
 
   HeaderPolicy policy;
 
-  /// `Cache-Control: max-age` applied to 404 responses. Zero = `no-cache`
+  /// `Cache-Control` applied to 404 responses. Zero = `no-cache`
   /// (Firebase Hosting, S3). Some CDNs apply the path's header rules to 404s
   /// too, which caches a missing hashed file for a year.
   final Duration negativeCacheTtl;
@@ -125,8 +154,12 @@ class HostingServer {
   /// long after a deploy, regardless of origin headers.
   final Duration cdnIndexTtl;
 
-  /// Rewrite unknown paths to `index.html` (Firebase `rewrites` / SPA mode).
+  /// Rewrite unknown paths without dots to `index.html` (guarded SPA mode).
   final bool spaRewrite;
+
+  /// Rewrite ALL unknown paths (including missing `.js`/`.png`) to `index.html`
+  /// (`"source": "**", "destination": "/index.html"`).
+  bool spaRewriteAll;
 
   late final Directory root = Directory.systemTemp.createTempSync(
     'redteam_host_',
@@ -235,41 +268,24 @@ class HostingServer {
     if (request.method != 'GET' && request.method != 'HEAD') {
       return Response(405);
     }
-    var rel = Uri.decodeComponent(request.url.path);
-    final prefix = basePath.substring(1);
-    if (prefix.isNotEmpty) {
-      if (!rel.startsWith(prefix)) {
-        log.add(ServedRequest(rel, 404, null, conditional: false));
-        return Response.notFound('outside base path: $rel');
-      }
-      rel = rel.substring(prefix.length);
+    final rawRel = Uri.decodeComponent(request.url.path);
+    final strippedRel = _stripBasePath(rawRel);
+    if (strippedRel == null) {
+      log.add(ServedRequest(rawRel, 404, null, conditional: false));
+      return Response.notFound('outside base path: $rawRel');
     }
-    if (rel.isEmpty || rel.endsWith('/')) rel = '${rel}index.html';
+    final originalRel = strippedRel;
+    final resolved = _resolvePayload(originalRel);
+    final rel = resolved.resolvedRel;
+    final bytes = resolved.bytes;
 
-    List<int>? bytes;
-    if (rel == 'index.html' &&
-        _frozenIndex != null &&
-        DateTime.now().isBefore(_frozenUntil!)) {
-      bytes = _frozenIndex;
-    } else {
-      final file = File(p.join(liveDir.path, rel));
-      if (file.existsSync()) {
-        bytes = file.readAsBytesSync();
-      } else if (spaRewrite && !rel.contains('.')) {
-        rel = 'index.html';
-        final index = File(p.join(liveDir.path, rel));
-        if (index.existsSync()) bytes = index.readAsBytesSync();
-      }
-    }
-
-    final cacheControl = cacheControlFor(policy, rel);
+    // Header matching uses the pre-rewrite request path (originalRel).
+    final cacheControl = cacheControlFor(policy, originalRel);
     if (bytes == null) {
-      final notFoundCc = negativeCacheTtl == Duration.zero
-          ? 'no-cache'
-          : 'max-age=${negativeCacheTtl.inSeconds}';
-      log.add(ServedRequest(rel, 404, notFoundCc, conditional: false));
+      final notFoundCc = _notFoundCacheControl(cacheControl);
+      log.add(ServedRequest(originalRel, 404, notFoundCc, conditional: false));
       return Response.notFound(
-        'not found: $rel',
+        'not found: $originalRel',
         headers: {'cache-control': notFoundCc},
       );
     }
@@ -295,6 +311,54 @@ class HostingServer {
       request.method == 'HEAD' ? null : bytes,
       headers: headers,
     );
+  }
+
+  String? _stripBasePath(String rawRel) {
+    var rel = rawRel;
+    final prefix = basePath.substring(1);
+    if (prefix.isNotEmpty) {
+      if (!rel.startsWith(prefix)) return null;
+      rel = rel.substring(prefix.length);
+    }
+    if (rel.isEmpty || rel.endsWith('/')) {
+      rel = '${rel}index.html';
+    }
+    return rel;
+  }
+
+  ({String resolvedRel, List<int>? bytes}) _resolvePayload(String rel) {
+    if (rel == 'index.html' &&
+        _frozenIndex != null &&
+        DateTime.now().isBefore(_frozenUntil!)) {
+      return (resolvedRel: rel, bytes: _frozenIndex);
+    }
+    final file = File(p.join(liveDir.path, rel));
+    if (file.existsSync()) {
+      return (resolvedRel: rel, bytes: file.readAsBytesSync());
+    }
+    final shouldSpaFallback =
+        spaRewriteAll ||
+        policy == HeaderPolicy.naiveImmutableGlobs ||
+        (spaRewrite && !rel.contains('.'));
+    if (shouldSpaFallback) {
+      final index = File(p.join(liveDir.path, 'index.html'));
+      return (
+        resolvedRel: 'index.html',
+        bytes: index.existsSync() ? index.readAsBytesSync() : null,
+      );
+    }
+    return (resolvedRel: rel, bytes: null);
+  }
+
+  String _notFoundCacheControl(String? pathCacheControl) {
+    if (negativeCacheTtl != Duration.zero) {
+      return 'max-age=${negativeCacheTtl.inSeconds}';
+    }
+    return switch (policy) {
+      HeaderPolicy.firebaseRules => cacheControlFor(policy, '404.html')!,
+      HeaderPolicy.firebaseDefaults => pathCacheControl ?? 'max-age=3600',
+      _ => 'no-cache',
+    };
   }
 
   static String _contentType(String rel) {
